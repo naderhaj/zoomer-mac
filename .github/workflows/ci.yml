@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  make:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Same flags as the Makefile, plus -Werror so warnings fail the build.
+      - run: make CFLAGS="-std=c11 -Wall -Wextra -O2 -fblocks -Werror"
+      - run: ./zoomer -h
+      - run: make install PREFIX="$RUNNER_TEMP/prefix" && "$RUNNER_TEMP/prefix/bin/zoomer" -h
+
+  nix:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build -L
+      - run: ./result/bin/zoomer -h
