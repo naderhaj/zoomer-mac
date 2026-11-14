@@ -24,6 +24,17 @@ make run      # builds and runs it
 make install  # copies it to /usr/local/bin (PREFIX=... to change)
 ```
 
+## With Nix
+
+With [Nix](https://nixos.org) and flakes enabled, no Xcode tools are needed:
+
+```sh
+nix run github:naderhaj/zoomer-mac            # run it without installing
+nix profile install github:naderhaj/zoomer-mac  # install it
+```
+
+Or, from a checkout, `nix build` puts the binary in `./result/bin/zoomer`.
+
 ## Permissions
 
 zoomer needs two permissions, both in **System Settings > Privacy & Security**:
