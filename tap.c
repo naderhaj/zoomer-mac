@@ -103,7 +103,11 @@ static CGEventRef on_pan(CGEventTapProxy proxy, CGEventType type, CGEventRef e,
                          void *user) {
   (void)proxy, (void)user;
   if (disabled(type)) {
-    CGEventTapEnable(pan_tap, active); // back on only if still zoomed
+    // We also get this when we turn the tap off ourselves in close_zoom(),
+    // so only turn it back on if still zoomed. Never turn it off here: that
+    // sends another of these and we'd spin forever.
+    if (active)
+      CGEventTapEnable(pan_tap, true);
     return e;
   }
   if (!active)
