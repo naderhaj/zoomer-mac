@@ -21,6 +21,7 @@ run: zoomer
 	./zoomer
 
 install: zoomer
+	install -d $(PREFIX)/bin
 	install -m 755 zoomer $(PREFIX)/bin/zoomer
 
 clean:

@@ -11,7 +11,10 @@
 #define SPEED 0.01 // zoom factor per point of scroll, as exp(SPEED * delta)
 #define KEY_ESCAPE 53
 
-static CFMachPortRef tap;
+// Two taps, so that while nothing is zoomed we only hear about scrolling
+// and stay out of the way of every other key press and mouse move.
+static CFMachPortRef scroll_tap; // always on: the shortcut
+static CFMachPortRef pan_tap;    // on only while zoomed: mouse moves and Esc
 static double direction = 1.0;
 static double zoom = 1.0;
 static bool active;
@@ -42,6 +45,7 @@ static CGDirectDisplayID display_at(CGPoint p) {
 static void close_zoom(void) {
   active = false;
   zoom = 1.0;
+  CGEventTapEnable(pan_tap, false);
   capture_stop();
   overlay_hide();
 }
@@ -61,8 +65,10 @@ static void scroll(CGEventRef e) {
     CGDirectDisplayID d = display_at(CGEventGetLocation(e));
     bounds = CGDisplayBounds(d);
     active = true;
+    CGEventTapEnable(pan_tap, true);
     overlay_set_display(d);
-    capture_start(d);
+    // If the capture dies, close the zoom so we don't think we're still in it.
+    capture_start(d, close_zoom);
   }
 
   zoom = fmin(zoom * exp(dy * SPEED), MAX_ZOOM);
@@ -72,35 +78,47 @@ static void scroll(CGEventRef e) {
     update(CGEventGetLocation(e));
 }
 
+// macOS turns taps off if they're slow or the user did something like enter
+// secure input, and tells us with one of these instead of an event.
+static bool disabled(CGEventType type) {
+  return type == kCGEventTapDisabledByTimeout ||
+         type == kCGEventTapDisabledByUserInput;
+}
+
 // Returning NULL swallows the event; returning `e` passes it on.
-static CGEventRef on_event(CGEventTapProxy proxy, CGEventType type,
-                           CGEventRef e, void *user) {
+static CGEventRef on_scroll(CGEventTapProxy proxy, CGEventType type,
+                            CGEventRef e, void *user) {
   (void)proxy, (void)user;
-  switch (type) {
-  case kCGEventTapDisabledByTimeout:
-  case kCGEventTapDisabledByUserInput:
-    // macOS turns taps off if they're slow or the user did something like
-    // enter secure input; turn it back on.
-    CGEventTapEnable(tap, true);
+  if (disabled(type)) {
+    CGEventTapEnable(scroll_tap, true);
+    return e;
+  }
+  if (type != kCGEventScrollWheel || (CGEventGetFlags(e) & MODS) != MODS)
+    return e;
+  scroll(e);
+  return NULL;
+}
+
+static CGEventRef on_pan(CGEventTapProxy proxy, CGEventType type, CGEventRef e,
+                         void *user) {
+  (void)proxy, (void)user;
+  if (disabled(type)) {
+    CGEventTapEnable(pan_tap, active); // back on only if still zoomed
+    return e;
+  }
+  if (!active)
     return e;
 
-  case kCGEventScrollWheel:
-    if ((CGEventGetFlags(e) & MODS) != MODS)
-      return e;
-    scroll(e);
-    return NULL;
-
+  switch (type) {
   case kCGEventMouseMoved:
   case kCGEventLeftMouseDragged:
   case kCGEventRightMouseDragged:
   case kCGEventOtherMouseDragged:
-    if (active)
-      update(CGEventGetLocation(e));
+    update(CGEventGetLocation(e));
     return e;
 
   case kCGEventKeyDown:
-    if (active &&
-        CGEventGetIntegerValueField(e, kCGKeyboardEventKeycode) == KEY_ESCAPE) {
+    if (CGEventGetIntegerValueField(e, kCGKeyboardEventKeycode) == KEY_ESCAPE) {
       close_zoom();
       return NULL;
     }
@@ -111,21 +129,30 @@ static CGEventRef on_event(CGEventTapProxy proxy, CGEventType type,
   }
 }
 
-bool tap_init(bool reverse) {
-  direction = reverse ? -1.0 : 1.0;
-  CGEventMask mask = CGEventMaskBit(kCGEventScrollWheel) |
-                     CGEventMaskBit(kCGEventMouseMoved) |
-                     CGEventMaskBit(kCGEventLeftMouseDragged) |
-                     CGEventMaskBit(kCGEventRightMouseDragged) |
-                     CGEventMaskBit(kCGEventOtherMouseDragged) |
-                     CGEventMaskBit(kCGEventKeyDown);
+static CFMachPortRef add_tap(CGEventMask mask, CGEventTapCallBack callback) {
   // kCGEventTapOptionDefault (not ListenOnly) so we can swallow events.
-  tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
-                         kCGEventTapOptionDefault, mask, on_event, NULL);
-  if (!tap)
-    return false;
-  CFRunLoopSourceRef src = CFMachPortCreateRunLoopSource(NULL, tap, 0);
+  CFMachPortRef t =
+      CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
+                       kCGEventTapOptionDefault, mask, callback, NULL);
+  if (!t)
+    return NULL;
+  CFRunLoopSourceRef src = CFMachPortCreateRunLoopSource(NULL, t, 0);
   CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);
   CFRelease(src);
+  return t;
+}
+
+bool tap_init(bool reverse) {
+  direction = reverse ? -1.0 : 1.0;
+  scroll_tap = add_tap(CGEventMaskBit(kCGEventScrollWheel), on_scroll);
+  pan_tap = add_tap(CGEventMaskBit(kCGEventMouseMoved) |
+                        CGEventMaskBit(kCGEventLeftMouseDragged) |
+                        CGEventMaskBit(kCGEventRightMouseDragged) |
+                        CGEventMaskBit(kCGEventOtherMouseDragged) |
+                        CGEventMaskBit(kCGEventKeyDown),
+                    on_pan);
+  if (!scroll_tap || !pan_tap)
+    return false;
+  CGEventTapEnable(pan_tap, false); // until the first zoom
   return true;
 }

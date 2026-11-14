@@ -24,8 +24,17 @@ static bool busy;    // an async operation is in flight
 static bool running; // the stream has been started and not stopped
 static id stream;    // SCStream, built on first use and reused
 static id output;    // our SCStreamOutput / SCStreamDelegate object
+static void (*on_lost)(void); // tells the caller the capture is gone
 
 static void step(void);
+
+// The capture failed or was stopped under us: give up rather than retry in
+// a loop, and let the caller close the zoom.
+static void lost(void) {
+  want = false;
+  if (on_lost)
+    on_lost();
+}
 
 static void print_error(const char *what, id error) {
   id desc = error ? MSG(id)(error, sel("localizedDescription")) : NULL;
@@ -73,9 +82,8 @@ static void on_stop(id self, SEL _cmd, id s, id error) {
       MSG(void)(stream, sel("release"));
       stream = NULL;
       running = false;
+      lost();
     }
-    overlay_hide();
-    want = false;
   });
 }
 
@@ -204,7 +212,7 @@ static void step(void) {
           dispatch_async(dispatch_get_main_queue(), ^{
             busy = false;
             if (!stream)
-              want = false; // failed: don't retry in a loop
+              lost();
             step();
           });
         });
@@ -217,7 +225,7 @@ static void step(void) {
                                 print_error("could not start capture", error);
                                 dispatch_async(dispatch_get_main_queue(), ^{
                                   running = false;
-                                  want = false;
+                                  lost();
                                 });
                               }
                               done();
@@ -234,9 +242,10 @@ static void step(void) {
   }
 }
 
-void capture_start(CGDirectDisplayID d) {
+void capture_start(CGDirectDisplayID d, void (*lost_cb)(void)) {
   want = true;
   display = d;
+  on_lost = lost_cb;
   step();
 }
 
