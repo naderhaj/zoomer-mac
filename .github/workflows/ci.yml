@@ -9,7 +9,7 @@ jobs:
   make:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Same flags as the Makefile, plus -Werror so warnings fail the build.
       - run: make CFLAGS="-std=c11 -Wall -Wextra -O2 -fblocks -Werror"
       - run: ./zoomer -h
@@ -18,7 +18,7 @@ jobs:
   nix:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
       - run: nix build -L
       - run: ./result/bin/zoomer -h
